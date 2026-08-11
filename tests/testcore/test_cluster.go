@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +44,7 @@ import (
 	"go.temporal.io/server/common/telemetry"
 	"go.temporal.io/server/common/testing/freeport"
 	"go.temporal.io/server/common/testing/testhooks"
+	"go.temporal.io/server/common/testing/testlogger"
 	"go.temporal.io/server/temporal"
 	"go.temporal.io/server/temporal/environment"
 	"go.temporal.io/server/tests/testutils"
@@ -81,10 +83,12 @@ type (
 		TokenProvider             auth.TokenProvider
 		TLSConfigProvider         *encryption.FixedTLSConfigProvider
 		AdditionalServerOptions   []temporal.ServerOption
+		preseededNamespaces       []preseededNamespace
+		bootPhaseObserver         func(string, time.Duration)
 	}
 
 	TestClusterFactory interface {
-		NewCluster(t *testing.T, clusterConfig *TestClusterConfig, logger log.Logger) (*TestCluster, error)
+		NewCluster(t clusterTest, clusterConfig *TestClusterConfig, logger log.Logger) (*TestCluster, error)
 	}
 
 	defaultTestClusterFactory struct {
@@ -92,12 +96,41 @@ type (
 	}
 )
 
+type clusterTest interface {
+	testlogger.CleanupCapableT
+}
+
 const (
 	httpProtocol transferProtocol = "http"
 	grpcProtocol transferProtocol = "grpc"
 )
 
-func (f *defaultTestClusterFactory) NewCluster(t *testing.T, clusterConfig *TestClusterConfig, logger log.Logger) (*TestCluster, error) {
+// Boot phase names reported to bootPhaseObserver.
+const (
+	bootPhasePersistence     = "persistence"      // create + migrate the test database, build persistence managers
+	bootPhaseNamespaces      = "namespaces"       // seed the per-cluster namespaces directly into persistence
+	bootPhaseClusterMetadata = "cluster-metadata" // write cluster metadata rows and reconcile them back into config
+	bootPhaseFxGraph         = "fx-graph"         // temporal.NewServer: build the server graph and all four service graphs
+	bootPhaseServiceStart    = "service-start"    // fx lifecycle start hooks for all services
+	bootPhaseTotal           = "total"
+)
+
+// bootPhaseObserver, when non-nil, receives the duration of each cluster boot
+// phase. Only set by benchmarks in this package; nil in normal test runs, where
+// recordBootPhase compiles down to a single atomic load.
+var bootPhaseObserver atomic.Pointer[func(phase string, d time.Duration)]
+
+func recordBootPhase(observer func(string, time.Duration), phase string, start time.Time) {
+	duration := time.Since(start)
+	if observer != nil {
+		observer(phase, duration)
+	}
+	if observer := bootPhaseObserver.Load(); observer != nil {
+		(*observer)(phase, duration)
+	}
+}
+
+func (f *defaultTestClusterFactory) NewCluster(t clusterTest, clusterConfig *TestClusterConfig, logger log.Logger) (*TestCluster, error) {
 	return newClusterWithPersistenceTestBaseFactory(t, clusterConfig, logger, f.tbFactory)
 }
 
@@ -139,11 +172,13 @@ func (f *defaultPersistenceTestBaseFactory) NewTestBase(options *persistencetest
 }
 
 func newClusterWithPersistenceTestBaseFactory(
-	t *testing.T,
+	t clusterTest,
 	clusterConfig *TestClusterConfig,
 	logger log.Logger,
 	tbFactory persistenceTestBaseFactory,
-) (*TestCluster, error) {
+) (clusterResult *TestCluster, retErr error) {
+	defer recordBootPhase(clusterConfig.bootPhaseObserver, bootPhaseTotal, time.Now())
+
 	const minNodes = 1
 	clusterConfig.FrontendConfig.NumFrontendHosts = max(minNodes, clusterConfig.FrontendConfig.NumFrontendHosts)
 	clusterConfig.HistoryConfig.NumHistoryHosts = max(minNodes, clusterConfig.HistoryConfig.NumHistoryHosts)
@@ -193,9 +228,34 @@ func newClusterWithPersistenceTestBaseFactory(
 	clusterConfig.Persistence.Logger = logger
 	clusterConfig.Persistence.FaultInjection = clusterConfig.FaultInjection
 
+	persistenceStart := time.Now()
 	testBase := tbFactory.NewTestBase(&clusterConfig.Persistence)
+	var host *temporalImpl
+	defer func() {
+		if clusterResult != nil {
+			return
+		}
+		if host != nil {
+			retErr = multierr.Combine(retErr, host.Stop())
+		}
+		testBase.TearDownWorkflowStore()
+		if clusterConfig.ESConfig != nil {
+			retErr = multierr.Combine(retErr, deleteIndex(clusterConfig.ESConfig, logger))
+		}
+	}()
 
 	testBase.Setup(clusterMetadataConfig)
+	namespaceStart := time.Now()
+	for _, ns := range clusterConfig.preseededNamespaces {
+		if _, err := testBase.MetadataManager.CreateNamespace(
+			context.Background(),
+			ns.createRequest(clusterMetadataConfig.CurrentClusterName),
+		); err != nil {
+			return nil, fmt.Errorf("preseed namespace %q: %w", ns.name, err)
+		}
+	}
+	recordBootPhase(clusterConfig.bootPhaseObserver, bootPhaseNamespaces, namespaceStart)
+	recordBootPhase(clusterConfig.bootPhaseObserver, bootPhasePersistence, persistenceStart)
 	var err error
 
 	pConfig := testBase.DefaultTestCluster.Config()
@@ -227,6 +287,7 @@ func newClusterWithPersistenceTestBaseFactory(
 		clusterConfig.ESConfig = nil
 	}
 
+	clusterMetadataStart := time.Now()
 	clusterInfoMap := make(map[string]cluster.ClusterInformation)
 	for clusterName, clusterInfo := range clusterMetadataConfig.ClusterInformation {
 		clusterInfo.ShardCount = clusterConfig.HistoryConfig.NumHistoryShards
@@ -270,6 +331,7 @@ func newClusterWithPersistenceTestBaseFactory(
 	if err != nil {
 		return nil, err
 	}
+	recordBootPhase(clusterConfig.bootPhaseObserver, bootPhaseClusterMetadata, clusterMetadataStart)
 
 	var tlsConfigProvider *encryption.FixedTLSConfigProvider
 	if clusterConfig.TLSConfigProvider != nil {
@@ -318,7 +380,7 @@ func newClusterWithPersistenceTestBaseFactory(
 		logger.Fatal("Failed to start pprof", tag.Error(err))
 	}
 
-	host := newTemporal(t, &temporalParams{
+	host = newTemporal(t, &temporalParams{
 		Config:                    serverConfig,
 		MetadataMgr:               testBase.MetadataManager,
 		AbstractDataStoreFactory:  testBase.AbstractDataStoreFactory,
@@ -334,12 +396,14 @@ func newClusterWithPersistenceTestBaseFactory(
 		EnableReplicationRecorder: clusterConfig.EnableReplicationRecorder,
 		WorkerConfig:              clusterConfig.WorkerConfig,
 		AdditionalServerOptions:   clusterConfig.AdditionalServerOptions,
+		bootPhaseObserver:         clusterConfig.bootPhaseObserver,
 	})
 	if err = host.Start(); err != nil {
 		return nil, err
 	}
 
-	return &TestCluster{testBase: testBase, host: host}, nil
+	clusterResult = &TestCluster{testBase: testBase, host: host}
+	return clusterResult, nil
 }
 
 func setupIndex(esConfig *esclient.Config, logger log.Logger) error {
