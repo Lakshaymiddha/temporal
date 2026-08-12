@@ -175,9 +175,6 @@ func NewTestBaseWithSQL(options *TestBaseOptions) *TestBase {
 		}
 	}
 	testCluster := sql.NewTestCluster(options.SQLDBPluginName, options.DBName, options.DBUsername, options.DBPassword, options.DBHost, options.DBPort, options.ConnectAttributes, options.SchemaDir, options.FaultInjection, logger)
-	if sqliteSchemaTemplateSupported(options) {
-		return NewTestBaseForCluster(newSQLiteTemplateTestCluster(testCluster, options.DBName, logger), logger)
-	}
 	return NewTestBaseForCluster(testCluster, logger)
 }
 
