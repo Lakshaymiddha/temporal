@@ -17,6 +17,7 @@ import (
 	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/metrics"
+	"go.temporal.io/server/common/namespace"
 	commonnexus "go.temporal.io/server/common/nexus"
 	"go.temporal.io/server/common/nexus/nexusrpc"
 	"go.temporal.io/server/common/persistence"
@@ -120,6 +121,7 @@ type clientProviderCacheKey struct {
 func clientProviderFactory(
 	httpTransportProvider NexusTransportProvider,
 	clusterMetadata cluster.Metadata,
+	namespaceRegistry namespace.Registry,
 	rpcFactory common.RPCFactory,
 	tracerProvider trace.TracerProvider,
 	propagator propagation.TextMapPropagator,
@@ -143,7 +145,12 @@ func clientProviderFactory(
 	return func(ctx context.Context, namespaceID string, entry *persistencespb.NexusEndpointEntry, service string) (*nexusrpc.HTTPClient, error) {
 		var url string
 		var httpClient *http.Client
-		httpCaller := httpClient.Do
+		var targetNamespaceName string
+		originNamespaceName := namespaceID
+		if namespaceName, err := namespaceRegistry.GetNamespaceName(namespace.ID(namespaceID)); err == nil {
+			originNamespaceName = namespaceName.String()
+		}
+		setCallbackSource := false
 		switch variant := entry.Endpoint.Spec.Target.Variant.(type) {
 		case *persistencespb.NexusEndpointTarget_External_:
 			url = variant.External.GetUrl()
@@ -152,26 +159,28 @@ func clientProviderFactory(
 			if err != nil {
 				return nil, err
 			}
-			if clusterID != "" {
-				httpCaller = func(r *http.Request) (*http.Response, error) {
-					resp, callErr := httpClient.Do(r)
-					commonnexus.SetFailureSourceOnContext(ctx, resp)
-					return resp, callErr
-				}
-			}
 		case *persistencespb.NexusEndpointTarget_Worker_:
 			url = cl.BaseURL() + "/" + commonnexus.RouteDispatchNexusTaskByEndpoint.Path(entry.Id)
 			httpClient = &cl.Client
 			if clusterID != "" {
-				httpCaller = func(r *http.Request) (*http.Response, error) {
-					r.Header.Set(nexusCallbackSourceHeader, clusterID)
-					resp, callErr := httpClient.Do(r)
-					commonnexus.SetFailureSourceOnContext(ctx, resp)
-					return resp, callErr
-				}
+				setCallbackSource = true
+			}
+			if namespaceName, err := namespaceRegistry.GetNamespaceName(namespace.ID(variant.Worker.GetNamespaceId())); err == nil {
+				targetNamespaceName = namespaceName.String()
 			}
 		default:
 			return nil, serviceerror.NewInternal("got unexpected endpoint target")
+		}
+		httpCaller := func(r *http.Request) (*http.Response, error) {
+			telemetry.MarkNexusHTTPRequest(r, originNamespaceName, targetNamespaceName)
+			if setCallbackSource {
+				r.Header.Set(nexusCallbackSourceHeader, clusterID)
+			}
+			resp, callErr := httpClient.Do(r)
+			if clusterID != "" {
+				commonnexus.SetFailureSourceOnContext(ctx, resp)
+			}
+			return resp, callErr
 		}
 		return nexusrpc.NewHTTPClient(nexusrpc.HTTPClientOptions{
 			BaseURL:    url,

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/cluster"
+	"go.temporal.io/server/common/namespace"
 	"go.uber.org/mock/gomock"
 )
 
@@ -24,6 +25,8 @@ func TestClientProviderFactoryExternalEndpointInjectsTraceContext(t *testing.T) 
 		"current": {ClusterID: "cluster-id"},
 	})
 	clusterMetadata.EXPECT().GetCurrentClusterName().Return("current")
+	namespaceRegistry := namespace.NewMockRegistry(ctrl)
+	namespaceRegistry.EXPECT().GetNamespaceName(namespace.ID("namespace-id")).Return(namespace.Name("namespace"), nil)
 	rpcFactory := common.NewMockRPCFactory(ctrl)
 	rpcFactory.EXPECT().CreateLocalFrontendHTTPClient().Return(&common.FrontendHTTPClient{}, nil)
 	tp := trace.NewTracerProvider()
@@ -40,7 +43,7 @@ func TestClientProviderFactoryExternalEndpointInjectsTraceContext(t *testing.T) 
 			}, nil
 		})
 	}
-	provider, err := clientProviderFactory(transportProvider, clusterMetadata, rpcFactory, tp, nil)
+	provider, err := clientProviderFactory(transportProvider, clusterMetadata, namespaceRegistry, rpcFactory, tp, nil)
 	require.NoError(t, err)
 
 	ctx, span := tp.Tracer("test").Start(context.Background(), "parent")
