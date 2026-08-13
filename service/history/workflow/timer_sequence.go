@@ -31,6 +31,15 @@ const (
 	TimerTaskStatusCreatedHeartbeat
 )
 
+// TimerTaskStatusCreatedPerAttempt is the set of activity timer task bits scoped to a
+// single attempt. They must be cleared when an activity moves to a new attempt so the
+// timers are recreated against the new deadlines. TimerTaskStatusCreatedScheduleToClose
+// is deliberately excluded: it is a whole-activity deadline that spans retries, so
+// clearing it would regenerate a timeout task that is already pending.
+const TimerTaskStatusCreatedPerAttempt = TimerTaskStatusCreatedStartToClose |
+	TimerTaskStatusCreatedScheduleToStart |
+	TimerTaskStatusCreatedHeartbeat
+
 type (
 	// TimerSequenceID represent a in mem timer
 	TimerSequenceID struct {

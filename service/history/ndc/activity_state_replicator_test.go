@@ -29,6 +29,7 @@ import (
 	historyi "go.temporal.io/server/service/history/interfaces"
 	"go.temporal.io/server/service/history/shard"
 	"go.temporal.io/server/service/history/tests"
+	"go.temporal.io/server/service/history/workflow"
 	wcache "go.temporal.io/server/service/history/workflow/cache"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1008,15 +1009,15 @@ func (s *activityReplicatorStateSuite) TestSyncActivity_ActivityFound_Zombie() {
 		ScheduledEventId: scheduledEventID,
 		ScheduledTime:    timestamppb.New(now),
 		VersionHistory:   incomingVersionHistory,
-	}, false).Return(nil)
-	s.mockMutableState.EXPECT().ShouldResetActivityTimerTaskMask(
+	}, int32(workflow.TimerTaskStatusNone)).Return(nil)
+	s.mockMutableState.EXPECT().NextActivityTimerTaskMask(
 		&persistencespb.ActivityInfo{
 			Version: version,
 		},
 		&persistencespb.ActivityInfo{
 			Version: version,
 			Attempt: 0,
-		}).Return(false)
+		}).Return(int32(workflow.TimerTaskStatusNone))
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(map[int64]*persistencespb.ActivityInfo{})
 
 	weContext.EXPECT().UpdateWorkflowExecutionAsPassive(gomock.Any(), s.mockShard).Return(nil)
@@ -1114,15 +1115,15 @@ func (s *activityReplicatorStateSuite) TestSyncActivities_ActivityFound_Zombie()
 		ScheduledEventId: scheduledEventID,
 		ScheduledTime:    timestamppb.New(now),
 		VersionHistory:   incomingVersionHistory,
-	}, false).Return(nil)
-	s.mockMutableState.EXPECT().ShouldResetActivityTimerTaskMask(
+	}, int32(workflow.TimerTaskStatusNone)).Return(nil)
+	s.mockMutableState.EXPECT().NextActivityTimerTaskMask(
 		&persistencespb.ActivityInfo{
 			Version: version,
 		},
 		&persistencespb.ActivityInfo{
 			Version: version,
 			Attempt: 0,
-		}).Return(false)
+		}).Return(int32(workflow.TimerTaskStatusNone))
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(map[int64]*persistencespb.ActivityInfo{})
 
 	weContext.EXPECT().UpdateWorkflowExecutionAsPassive(gomock.Any(), s.mockShard).Return(nil)
@@ -1216,15 +1217,15 @@ func (s *activityReplicatorStateSuite) TestSyncActivity_ActivityFound_NonZombie(
 		ScheduledEventId: scheduledEventID,
 		ScheduledTime:    timestamppb.New(now),
 		VersionHistory:   incomingVersionHistory,
-	}, false).Return(nil)
-	s.mockMutableState.EXPECT().ShouldResetActivityTimerTaskMask(
+	}, int32(workflow.TimerTaskStatusNone)).Return(nil)
+	s.mockMutableState.EXPECT().NextActivityTimerTaskMask(
 		&persistencespb.ActivityInfo{
 			Version: version,
 		},
 		&persistencespb.ActivityInfo{
 			Version: version,
 			Attempt: 0,
-		}).Return(false)
+		}).Return(int32(workflow.TimerTaskStatusNone))
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(map[int64]*persistencespb.ActivityInfo{})
 
 	weContext.EXPECT().UpdateWorkflowExecutionAsPassive(gomock.Any(), s.mockShard).Return(nil)
@@ -1322,15 +1323,15 @@ func (s *activityReplicatorStateSuite) TestSyncActivities_ActivityFound_NonZombi
 		ScheduledEventId: scheduledEventID,
 		ScheduledTime:    timestamppb.New(now),
 		VersionHistory:   incomingVersionHistory,
-	}, false).Return(nil)
-	s.mockMutableState.EXPECT().ShouldResetActivityTimerTaskMask(
+	}, int32(workflow.TimerTaskStatusNone)).Return(nil)
+	s.mockMutableState.EXPECT().NextActivityTimerTaskMask(
 		&persistencespb.ActivityInfo{
 			Version: version,
 		},
 		&persistencespb.ActivityInfo{
 			Version: version,
 			Attempt: 0,
-		}).Return(false)
+		}).Return(int32(workflow.TimerTaskStatusNone))
 	s.mockMutableState.EXPECT().GetPendingActivityInfos().Return(map[int64]*persistencespb.ActivityInfo{})
 
 	weContext.EXPECT().UpdateWorkflowExecutionAsPassive(gomock.Any(), s.mockShard).Return(nil)

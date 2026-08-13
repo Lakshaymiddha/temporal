@@ -3671,18 +3671,18 @@ func (mr *MockMutableStateMockRecorder) SetWorkflowTaskStartToCloseTimeoutTask(t
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWorkflowTaskStartToCloseTimeoutTask", reflect.TypeOf((*MockMutableState)(nil).SetWorkflowTaskStartToCloseTimeoutTask), task)
 }
 
-// ShouldResetActivityTimerTaskMask mocks base method.
-func (m *MockMutableState) ShouldResetActivityTimerTaskMask(current, incoming *persistence.ActivityInfo) bool {
+// NextActivityTimerTaskMask mocks base method.
+func (m *MockMutableState) NextActivityTimerTaskMask(current, incoming *persistence.ActivityInfo) int32 {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ShouldResetActivityTimerTaskMask", current, incoming)
-	ret0, _ := ret[0].(bool)
+	ret := m.ctrl.Call(m, "NextActivityTimerTaskMask", current, incoming)
+	ret0, _ := ret[0].(int32)
 	return ret0
 }
 
-// ShouldResetActivityTimerTaskMask indicates an expected call of ShouldResetActivityTimerTaskMask.
-func (mr *MockMutableStateMockRecorder) ShouldResetActivityTimerTaskMask(current, incoming any) *gomock.Call {
+// NextActivityTimerTaskMask indicates an expected call of NextActivityTimerTaskMask.
+func (mr *MockMutableStateMockRecorder) NextActivityTimerTaskMask(current, incoming any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldResetActivityTimerTaskMask", reflect.TypeOf((*MockMutableState)(nil).ShouldResetActivityTimerTaskMask), current, incoming)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NextActivityTimerTaskMask", reflect.TypeOf((*MockMutableState)(nil).NextActivityTimerTaskMask), current, incoming)
 }
 
 // StartDeploymentTransition mocks base method.
@@ -3758,7 +3758,7 @@ func (mr *MockMutableStateMockRecorder) UpdateActivity(arg0, arg1 any) *gomock.C
 }
 
 // UpdateActivityInfo mocks base method.
-func (m *MockMutableState) UpdateActivityInfo(arg0 *historyservice.ActivitySyncInfo, arg1 bool) error {
+func (m *MockMutableState) UpdateActivityInfo(arg0 *historyservice.ActivitySyncInfo, arg1 int32) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateActivityInfo", arg0, arg1)
 	ret0, _ := ret[0].(error)

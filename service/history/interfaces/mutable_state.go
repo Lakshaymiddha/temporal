@@ -239,7 +239,7 @@ type (
 		IsResourceDuplicated(resourceDedupKey definition.DeduplicationID) bool
 		IsWorkflowPendingOnWorkflowTaskBackoff() bool
 		UpdateDuplicatedResource(resourceDedupKey definition.DeduplicationID)
-		UpdateActivityInfo(*historyservice.ActivitySyncInfo, bool) error
+		UpdateActivityInfo(*historyservice.ActivitySyncInfo, int32) error
 		ApplyMutation(mutation *persistencespb.WorkflowMutableStateMutation) error
 		ApplySnapshot(snapshot *persistencespb.WorkflowMutableState) error
 		ApplyActivityTaskCancelRequestedEvent(*historypb.HistoryEvent) error
@@ -377,7 +377,7 @@ type (
 
 		InitTransitionHistory()
 
-		ShouldResetActivityTimerTaskMask(current, incoming *persistencespb.ActivityInfo) bool
+		NextActivityTimerTaskMask(current, incoming *persistencespb.ActivityInfo) int32
 		// GetEffectiveDeployment returns the effective deployment in the following order:
 		//  1. DeploymentVersionTransition.Deployment: this is returned when the wf is transitioning to a
 		//     new deployment

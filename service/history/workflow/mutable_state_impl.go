@@ -2134,7 +2134,7 @@ func (ms *MutableStateImpl) UpdateActivityProgress(
 // UpdateActivityInfo applies the necessary activity information
 func (ms *MutableStateImpl) UpdateActivityInfo(
 	incomingActivityInfo *historyservice.ActivitySyncInfo,
-	resetActivityTimerTaskStatus bool,
+	timerTaskStatus int32,
 ) error {
 	ai, ok := ms.pendingActivityInfoIDs[incomingActivityInfo.GetScheduledEventId()]
 	if !ok {
@@ -2164,9 +2164,7 @@ func (ms *MutableStateImpl) UpdateActivityInfo(
 	ai.RetryLastWorkerIdentity = incomingActivityInfo.GetLastWorkerIdentity()
 	ai.RetryLastFailure = incomingActivityInfo.LastFailure
 
-	if resetActivityTimerTaskStatus {
-		ai.TimerTaskStatus = TimerTaskStatusNone
-	}
+	ai.TimerTaskStatus = timerTaskStatus
 
 	ai.FirstScheduledTime = incomingActivityInfo.GetFirstScheduledTime()
 	ai.LastAttemptCompleteTime = incomingActivityInfo.GetLastAttemptCompleteTime()
@@ -9271,20 +9269,25 @@ func (ms *MutableStateImpl) ApplySnapshot(
 	})
 }
 
-func (ms *MutableStateImpl) ShouldResetActivityTimerTaskMask(current, incoming *persistencespb.ActivityInfo) bool {
-	// calculate whether to reset the activity timer task status bits
-	// reset timer task status bits if
-	// 1. same source cluster & attempt changes
-	// 2. same activity stamp
-	// 3. different source cluster
-	if !ms.clusterMetadata.IsVersionFromSameCluster(current.Version, incoming.Version) {
-		return true
-	} else if current.Attempt != incoming.Attempt {
-		return true
-	} else if current.Stamp != incoming.Stamp {
-		return true
+// NextActivityTimerTaskMask returns the activity timer task status bits to carry over
+// when applying `incoming` on top of `current` on the passive side.
+//
+// It mirrors UpdateActivityInfoForRetries on the active side: a new attempt invalidates
+// only the per-attempt timers, while the schedule-to-close timer spans retries and its
+// bit must survive, otherwise a task refresh regenerates a timeout task that is already
+// pending. A cross-cluster version change is the exception — tasks generated under the
+// previous owning cluster are dropped as stale at execution, so everything is recreated.
+func (ms *MutableStateImpl) NextActivityTimerTaskMask(current, incoming *persistencespb.ActivityInfo) int32 {
+	if current == nil {
+		return TimerTaskStatusNone
 	}
-	return false
+	if !ms.clusterMetadata.IsVersionFromSameCluster(current.Version, incoming.Version) {
+		return TimerTaskStatusNone
+	}
+	if current.Attempt != incoming.Attempt || current.Stamp != incoming.Stamp {
+		return current.TimerTaskStatus &^ TimerTaskStatusCreatedPerAttempt
+	}
+	return current.TimerTaskStatus
 }
 
 func (ms *MutableStateImpl) applyUpdatesToSubStateMachines(
@@ -9296,11 +9299,7 @@ func (ms *MutableStateImpl) applyUpdatesToSubStateMachines(
 	isSnapshot bool,
 ) error {
 	err := applyUpdatesToSubStateMachine(ms, ms.pendingActivityInfoIDs, ms.updateActivityInfos, updatedActivityInfos, isSnapshot, ms.DeleteActivity, func(current, incoming *persistencespb.ActivityInfo) {
-		if current == nil || ms.ShouldResetActivityTimerTaskMask(current, incoming) {
-			incoming.TimerTaskStatus = TimerTaskStatusNone
-		} else {
-			incoming.TimerTaskStatus = current.TimerTaskStatus
-		}
+		incoming.TimerTaskStatus = ms.NextActivityTimerTaskMask(current, incoming)
 	}, func(ai *persistencespb.ActivityInfo) {
 		ms.pendingActivityIDToEventID[ai.ActivityId] = ai.ScheduledEventId
 		ms.activityInfosUserDataUpdated[ai.ScheduledEventId] = struct{}{}

@@ -314,7 +314,7 @@ func (r *ActivityStateReplicatorImpl) syncSingleActivityState(
 
 	if err := mutableState.UpdateActivityInfo(
 		activitySyncInfo,
-		mutableState.ShouldResetActivityTimerTaskMask(
+		mutableState.NextActivityTimerTaskMask(
 			activityInfo,
 			&persistencespb.ActivityInfo{
 				Version: activitySyncInfo.GetVersion(),

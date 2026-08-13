@@ -6219,17 +6219,19 @@ func (s *mutableStateSuite) TestRefreshTask_DiffCluster() {
 		Attempt: attempt,
 	}
 	localActivityInfo := &persistencespb.ActivityInfo{
-		Version: int64(100),
-		Attempt: incomingActivityInfo.Attempt,
+		Version:         int64(100),
+		Attempt:         incomingActivityInfo.Attempt,
+		TimerTaskStatus: TimerTaskStatusCreatedPerAttempt | TimerTaskStatusCreatedScheduleToClose,
 	}
 
 	s.mockShard.Resource.ClusterMetadata.EXPECT().IsVersionFromSameCluster(localActivityInfo.Version, version).Return(false)
 
-	shouldReset := s.mutableState.ShouldResetActivityTimerTaskMask(
+	// Failover: tasks from the previous owning cluster are stale, recreate everything.
+	mask := s.mutableState.NextActivityTimerTaskMask(
 		localActivityInfo,
 		incomingActivityInfo,
 	)
-	s.True(shouldReset)
+	s.Equal(int32(TimerTaskStatusNone), mask)
 }
 
 func (s *mutableStateSuite) TestRefreshTask_SameCluster_DiffAttempt() {
@@ -6240,17 +6242,20 @@ func (s *mutableStateSuite) TestRefreshTask_SameCluster_DiffAttempt() {
 		Attempt: attempt,
 	}
 	localActivityInfo := &persistencespb.ActivityInfo{
-		Version: version,
-		Attempt: attempt + 1,
+		Version:         version,
+		Attempt:         attempt + 1,
+		TimerTaskStatus: TimerTaskStatusCreatedPerAttempt | TimerTaskStatusCreatedScheduleToClose,
 	}
 
 	s.mockShard.Resource.ClusterMetadata.EXPECT().IsVersionFromSameCluster(version, version).Return(true)
 
-	shouldReset := s.mutableState.ShouldResetActivityTimerTaskMask(
+	mask := s.mutableState.NextActivityTimerTaskMask(
 		localActivityInfo,
 		incomingActivityInfo,
 	)
-	s.True(shouldReset)
+	// Per-attempt timers are recreated, but schedule-to-close spans retries and its
+	// pending task must not be regenerated. Mirrors UpdateActivityInfoForRetries.
+	s.Equal(int32(TimerTaskStatusCreatedScheduleToClose), mask)
 }
 
 func (s *mutableStateSuite) TestRefreshTask_SameCluster_SameAttempt() {
@@ -6261,17 +6266,19 @@ func (s *mutableStateSuite) TestRefreshTask_SameCluster_SameAttempt() {
 		Attempt: attempt,
 	}
 	localActivityInfo := &persistencespb.ActivityInfo{
-		Version: version,
-		Attempt: attempt,
+		Version:         version,
+		Attempt:         attempt,
+		TimerTaskStatus: TimerTaskStatusCreatedPerAttempt | TimerTaskStatusCreatedScheduleToClose,
 	}
 
 	s.mockShard.Resource.ClusterMetadata.EXPECT().IsVersionFromSameCluster(version, version).Return(true)
 
-	shouldReset := s.mutableState.ShouldResetActivityTimerTaskMask(
+	// Nothing changed, carry the mask over untouched.
+	mask := s.mutableState.NextActivityTimerTaskMask(
 		localActivityInfo,
 		incomingActivityInfo,
 	)
-	s.False(shouldReset)
+	s.Equal(int32(TimerTaskStatusCreatedPerAttempt|TimerTaskStatusCreatedScheduleToClose), mask)
 }
 
 func (s *mutableStateSuite) TestUpdateActivityTaskStatusWithTimerHeartbeat() {
