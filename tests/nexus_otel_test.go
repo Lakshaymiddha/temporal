@@ -169,10 +169,7 @@ func (s *NexusOTELSuite) requireExportedClientSpan(
 		s.FailNow("timed out waiting for Nexus request", s.Context().Err().Error())
 		return nil
 	}
-
 	traceID, spanID := s.requireTraceContext(headers)
-
-	// Verify the trace context.
 	s.AwaitTrue(func() bool {
 		for _, span := range exporter.GetSpans() {
 			if span.SpanKind == oteltrace.SpanKindClient &&
