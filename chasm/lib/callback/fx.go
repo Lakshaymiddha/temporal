@@ -30,14 +30,14 @@ func httpCallerProviderProvider(
 	rpcFactory common.RPCFactory,
 	httpClientCache *cluster.FrontendHTTPClientCache,
 	logger log.Logger,
-	httpClientTransportProvider telemetry.HTTPClientTransportProvider,
+	httpClientTransportWrapper telemetry.HTTPClientTransportWrapper,
 ) (HTTPCallerProvider, error) {
 	localClient, err := rpcFactory.CreateLocalFrontendHTTPClient()
 	if err != nil {
 		return nil, fmt.Errorf("cannot create local frontend HTTP client: %w", err)
 	}
 	defaultClient := &http.Client{
-		Transport: httpClientTransportProvider.Wrap(nil),
+		Transport: httpClientTransportWrapper.Wrap(nil),
 	}
 	callbackTokenGenerator := commonnexus.NewCallbackTokenGenerator()
 
