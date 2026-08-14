@@ -37,7 +37,7 @@ func httpCallerProviderProvider(
 		return nil, fmt.Errorf("cannot create local frontend HTTP client: %w", err)
 	}
 	defaultClient := &http.Client{
-		Transport: httpClientTransportWrapper.Wrap(nil),
+		Transport: httpClientTransportWrapper.Wrap(http.DefaultTransport),
 	}
 	callbackTokenGenerator := commonnexus.NewCallbackTokenGenerator()
 
