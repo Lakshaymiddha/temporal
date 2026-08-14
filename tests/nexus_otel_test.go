@@ -124,7 +124,7 @@ func (s *NexusOTELSuite) TestExternalOperation() {
 	s.requireExportedClientSpan(exporter, requestHeaders)
 }
 
-// Verifies worker-target Nexus operations trace requests routed through the local frontend client.
+// Verifies worker-target Nexus operations connect local frontend client and server spans.
 func (s *NexusOTELSuite) TestWorkerOperation() {
 	exporter := tracetest.NewInMemoryExporter()
 	env := s.newTestEnv(exporter)
@@ -154,7 +154,8 @@ func (s *NexusOTELSuite) TestWorkerOperation() {
 		ScheduleToCloseTimeout: durationpb.New(time.Minute),
 	})
 	s.NoError(err)
-	s.requireExportedClientSpan(exporter, requestHeaders)
+	headers := s.requireExportedClientSpan(exporter, requestHeaders)
+	s.requireExportedServerSpan(exporter, headers, "DispatchNexusTaskByEndpoint")
 }
 
 func (s *NexusOTELSuite) requireExportedClientSpan(
@@ -169,13 +170,7 @@ func (s *NexusOTELSuite) requireExportedClientSpan(
 		return nil
 	}
 
-	// Extract trace context from headers.
-	traceparent := strings.Split(headers.Get("traceparent"), "-")
-	s.Len(traceparent, 4)
-	traceID, err := oteltrace.TraceIDFromHex(traceparent[1])
-	s.NoError(err)
-	spanID, err := oteltrace.SpanIDFromHex(traceparent[2])
-	s.NoError(err)
+	traceID, spanID := s.requireTraceContext(headers)
 
 	// Verify the trace context.
 	s.AwaitTrue(func() bool {
@@ -189,4 +184,34 @@ func (s *NexusOTELSuite) requireExportedClientSpan(
 		return false
 	}, 10*time.Second, 100*time.Millisecond)
 	return headers
+}
+
+func (s *NexusOTELSuite) requireExportedServerSpan(
+	exporter *tracetest.InMemoryExporter,
+	headers headerGetter,
+	operation string,
+) {
+	traceID, clientSpanID := s.requireTraceContext(headers)
+	s.AwaitTrue(func() bool {
+		for _, span := range exporter.GetSpans() {
+			if span.Name == operation &&
+				span.SpanKind == oteltrace.SpanKindServer &&
+				span.SpanContext.TraceID() == traceID &&
+				span.Parent.SpanID() == clientSpanID {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func (s *NexusOTELSuite) requireTraceContext(headers headerGetter) (oteltrace.TraceID, oteltrace.SpanID) {
+	// Extract trace context from headers.
+	traceparent := strings.Split(headers.Get("traceparent"), "-")
+	s.Len(traceparent, 4)
+	traceID, err := oteltrace.TraceIDFromHex(traceparent[1])
+	s.NoError(err)
+	spanID, err := oteltrace.SpanIDFromHex(traceparent[2])
+	s.NoError(err)
+	return traceID, spanID
 }
