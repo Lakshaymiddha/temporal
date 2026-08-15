@@ -179,8 +179,7 @@ func (s *NexusOTELSuite) TestOperation() {
 func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	exporter := tracetest.NewInMemoryExporter()
 	env := s.newTestEnv(exporter)
-	tv := env.Tv()
-	taskQueue := tv.TaskQueue().GetName()
+	taskQueue := env.Tv().TaskQueue().GetName()
 	pollerErrCh := env.nexusTaskPoller(s.Context(), s.T(), taskQueue, nexusEchoHandler)
 	nexusClient, err := nexusrpc.NewHTTPClient(nexusrpc.HTTPClientOptions{
 		BaseURL: getDispatchByNsAndTqURL(env.HttpAPIAddress(), env.Namespace().String(), taskQueue),
@@ -191,7 +190,7 @@ func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	requestHeaders := nexus.Header{
 		"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 	}
-	_, err = nexusrpc.StartOperation(s.Context(), nexusClient, op, tv.Any().String(), nexus.StartOperationOptions{
+	_, err = nexusrpc.StartOperation(s.Context(), nexusClient, op, env.Tv().Any().String(), nexus.StartOperationOptions{
 		Header: requestHeaders,
 	})
 	s.NoError(err)
