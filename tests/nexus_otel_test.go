@@ -25,6 +25,7 @@ import (
 	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/nexus/nexusrpc"
 	"go.temporal.io/server/common/testing/parallelsuite"
+	"go.temporal.io/server/service/frontend/configs"
 	"go.temporal.io/server/tests/testcore"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -55,7 +56,7 @@ func (s *NexusOTELSuite) newTestEnv(exporter sdktrace.SpanExporter) *NexusTestEn
 }
 
 // Verifies production callback wiring propagates trace context and stored headers end to end.
-func (s *NexusOTELSuite) TestCallback() {
+func (s *NexusOTELSuite) TestWorkflowCompletionCallback() {
 	exporter := tracetest.NewInMemoryExporter()
 	env := s.newTestEnv(exporter)
 
@@ -180,7 +181,7 @@ func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	exporter := tracetest.NewInMemoryExporter()
 	env := s.newTestEnv(exporter)
 	tv := env.Tv()
-	taskQueue := tv.RequestID()
+	taskQueue := tv.TaskQueue().GetName()
 	pollerErrCh := env.nexusTaskPoller(s.Context(), s.T(), taskQueue, nexusEchoHandler)
 	nexusClient, err := nexusrpc.NewHTTPClient(nexusrpc.HTTPClientOptions{
 		BaseURL: getDispatchByNsAndTqURL(env.HttpAPIAddress(), env.Namespace().String(), taskQueue),
@@ -196,7 +197,12 @@ func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	})
 	s.NoError(err)
 	s.NoError(<-pollerErrCh)
-	s.requireExportedServerSpan(exporter, requestHeaders, "DispatchNexusTaskByNamespaceAndTaskQueue", "io.temporal.frontend")
+	s.requireExportedServerSpan(
+		exporter,
+		requestHeaders,
+		strings.TrimPrefix(configs.DispatchNexusTaskByNamespaceAndTaskQueueAPIName, "/"),
+		"io.temporal.frontend",
+	)
 }
 
 func (s *NexusOTELSuite) requireExportedNexusHTTPSpanPairs(
@@ -207,7 +213,7 @@ func (s *NexusOTELSuite) requireExportedNexusHTTPSpanPairs(
 	s.Await(func(s *NexusOTELSuite) {
 		pairs := 0
 		for _, serverSpan := range handlerExporter.GetSpans() {
-			if serverSpan.Name != "DispatchNexusTaskByEndpoint" ||
+			if serverSpan.Name != strings.TrimPrefix(configs.DispatchNexusTaskByEndpointAPIName, "/") ||
 				serverSpan.SpanKind != oteltrace.SpanKindServer ||
 				spanServiceName(serverSpan) != "io.temporal.frontend" {
 				continue
@@ -238,16 +244,17 @@ func (s *NexusOTELSuite) requireExportedClientSpan(
 	}
 	traceID, spanID := s.requireTraceContext(headers)
 	var exportedSpan tracetest.SpanStub
-	s.AwaitTrue(func() bool {
-		for _, span := range exporter.GetSpans() {
+	s.Await(func(s *NexusOTELSuite) {
+		spans := exporter.GetSpans()
+		for _, span := range spans {
 			if span.SpanKind == oteltrace.SpanKindClient &&
 				span.SpanContext.TraceID() == traceID &&
 				span.SpanContext.SpanID() == spanID {
 				exportedSpan = span
-				return true
+				return
 			}
 		}
-		return false
+		s.Require().Fail("matching client span not found", "exported spans: %v", spans)
 	}, 10*time.Second, 100*time.Millisecond)
 	s.requireSpanServiceName(exportedSpan, "io.temporal.history")
 	return headers
@@ -261,17 +268,18 @@ func (s *NexusOTELSuite) requireExportedServerSpan(
 ) {
 	traceID, clientSpanID := s.requireTraceContext(headers)
 	var exportedSpan tracetest.SpanStub
-	s.AwaitTrue(func() bool {
-		for _, span := range exporter.GetSpans() {
+	s.Await(func(s *NexusOTELSuite) {
+		spans := exporter.GetSpans()
+		for _, span := range spans {
 			if span.Name == operation &&
 				span.SpanKind == oteltrace.SpanKindServer &&
 				span.SpanContext.TraceID() == traceID &&
 				span.Parent.SpanID() == clientSpanID {
 				exportedSpan = span
-				return true
+				return
 			}
 		}
-		return false
+		s.Require().Fail("matching server span not found", "exported spans: %v", spans)
 	}, 10*time.Second, 100*time.Millisecond)
 	s.requireSpanServiceName(exportedSpan, serviceName)
 }
