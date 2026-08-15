@@ -142,8 +142,9 @@ func (s *NexusOTELSuite) TestOperation() {
 	callerExternalEndpoint := callerEnv.createExternalNexusEndpoint(
 		s.Context(),
 		s.T(),
-		handlerEnv.getDispatchByEndpointURL(handlerWorkerEndpoint.Id),
+		handlerEnv.dispatchByEndpointURL(handlerWorkerEndpoint.Id),
 	)
+	operationPathSuffix := "/" + service.Name + "/" + operation.Name()
 	operationID := tv.Any().String()
 	startResponse, err := callerEnv.FrontendClient().StartNexusOperationExecution(s.Context(), &workflowservice.StartNexusOperationExecutionRequest{
 		Namespace:              callerEnv.Namespace().String(),
@@ -155,7 +156,7 @@ func (s *NexusOTELSuite) TestOperation() {
 		ScheduleToCloseTimeout: durationpb.New(time.Minute),
 	})
 	s.NoError(err)
-	s.requireExportedNexusHTTPSpanPairs(callerExporter, handlerExporter, 1)
+	s.requireExportedNexusHTTPSpanPair(callerExporter, handlerExporter, operationPathSuffix)
 
 	pollResponse, err := callerEnv.FrontendClient().PollNexusOperationExecution(s.Context(), &workflowservice.PollNexusOperationExecutionRequest{
 		Namespace:   callerEnv.Namespace().String(),
@@ -172,7 +173,7 @@ func (s *NexusOTELSuite) TestOperation() {
 		Reason:      tv.Any().String(),
 	})
 	s.NoError(err)
-	s.requireExportedNexusHTTPSpanPairs(callerExporter, handlerExporter, 2)
+	s.requireExportedNexusHTTPSpanPair(callerExporter, handlerExporter, operationPathSuffix+"/cancel")
 }
 
 // Verifies the namespace and task queue dispatch route is instrumented independently of forwarding.
@@ -182,7 +183,7 @@ func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	taskQueue := env.Tv().TaskQueue().GetName()
 	pollerErrCh := env.nexusTaskPoller(s.Context(), s.T(), taskQueue, nexusEchoHandler)
 	nexusClient, err := nexusrpc.NewHTTPClient(nexusrpc.HTTPClientOptions{
-		BaseURL: getDispatchByNsAndTqURL(env.HttpAPIAddress(), env.Namespace().String(), taskQueue),
+		BaseURL: env.dispatchByNsAndTqURL(env.Namespace().String(), taskQueue),
 		Service: "test-service",
 	})
 	s.NoError(err)
@@ -203,29 +204,37 @@ func (s *NexusOTELSuite) TestNamespaceAndTaskQueueDispatch() {
 	)
 }
 
-func (s *NexusOTELSuite) requireExportedNexusHTTPSpanPairs(
+func (s *NexusOTELSuite) requireExportedNexusHTTPSpanPair(
 	callerExporter *tracetest.InMemoryExporter,
 	handlerExporter *tracetest.InMemoryExporter,
-	expected int,
+	pathSuffix string,
 ) {
 	s.Await(func(s *NexusOTELSuite) {
-		pairs := 0
-		for _, serverSpan := range handlerExporter.GetSpans() {
+		callerSpans := callerExporter.GetSpans()
+		handlerSpans := handlerExporter.GetSpans()
+		for _, serverSpan := range handlerSpans {
 			if serverSpan.Name != "temporal.api.nexusservice.v1.NexusService/DispatchByEndpoint" ||
 				serverSpan.SpanKind != oteltrace.SpanKindServer ||
-				spanServiceName(serverSpan) != "io.temporal.frontend" {
+				spanServiceName(serverSpan) != "io.temporal.frontend" ||
+				!strings.HasSuffix(spanURLPath(serverSpan), pathSuffix) {
 				continue
 			}
-			for _, clientSpan := range callerExporter.GetSpans() {
+			for _, clientSpan := range callerSpans {
 				if clientSpan.SpanKind == oteltrace.SpanKindClient &&
 					spanServiceName(clientSpan) == "io.temporal.history" &&
 					clientSpan.SpanContext.TraceID() == serverSpan.SpanContext.TraceID() &&
 					clientSpan.SpanContext.SpanID() == serverSpan.Parent.SpanID() {
-					pairs++
+					return
 				}
 			}
 		}
-		s.Require().Equal(expected, pairs)
+		s.Require().Fail(
+			"matching Nexus HTTP span pair not found",
+			"path suffix: %q; caller spans: %v; handler spans: %v",
+			pathSuffix,
+			callerSpans,
+			handlerSpans,
+		)
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -254,7 +263,7 @@ func (s *NexusOTELSuite) requireExportedClientSpan(
 		}
 		s.Require().Fail("matching client span not found", "exported spans: %v", spans)
 	}, 10*time.Second, 100*time.Millisecond)
-	s.requireSpanServiceName(exportedSpan, "io.temporal.history")
+	s.Require().Equal("io.temporal.history", spanServiceName(exportedSpan))
 	return headers
 }
 
@@ -279,14 +288,7 @@ func (s *NexusOTELSuite) requireExportedServerSpan(
 		}
 		s.Require().Fail("matching server span not found", "exported spans: %v", spans)
 	}, 10*time.Second, 100*time.Millisecond)
-	s.requireSpanServiceName(exportedSpan, serviceName)
-}
-
-func (s *NexusOTELSuite) requireSpanServiceName(span tracetest.SpanStub, expected string) {
-	s.Require().NotNil(span.Resource)
-	serviceName, ok := span.Resource.Set().Value(semconv.ServiceNameKey)
-	s.Require().True(ok)
-	s.Require().Equal(expected, serviceName.AsString())
+	s.Require().Equal(serviceName, spanServiceName(exportedSpan))
 }
 
 func spanServiceName(span tracetest.SpanStub) string {
@@ -298,6 +300,15 @@ func spanServiceName(span tracetest.SpanStub) string {
 		return ""
 	}
 	return serviceName.AsString()
+}
+
+func spanURLPath(span tracetest.SpanStub) string {
+	for _, attr := range span.Attributes {
+		if attr.Key == semconv.URLPathKey {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }
 
 func (s *NexusOTELSuite) requireTraceContext(headers headerGetter) (oteltrace.TraceID, oteltrace.SpanID) {

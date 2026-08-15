@@ -99,8 +99,16 @@ func (env *NexusTestEnv) createExternalNexusEndpoint(ctx context.Context, t *tes
 	return endpointName
 }
 
-func (env *NexusTestEnv) getDispatchByEndpointURL(endpoint string) string {
+func (env *NexusTestEnv) dispatchByEndpointURL(endpoint string) string {
 	return "http://" + env.HttpAPIAddress() + "/" + cnexus.RouteDispatchNexusTaskByEndpoint.Path(endpoint)
+}
+
+func (env *NexusTestEnv) dispatchByNsAndTqURL(namespace string, taskQueue string) string {
+	return "http://" + env.HttpAPIAddress() + "/" + cnexus.RouteDispatchNexusTaskByNamespaceAndTaskQueue.
+		Path(cnexus.NamespaceAndTaskQueue{
+			Namespace: namespace,
+			TaskQueue: taskQueue,
+		})
 }
 
 // nexusTaskResponse represents a successful response from a nexus task handler.
